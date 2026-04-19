@@ -1,10 +1,10 @@
 from fastapi import FastAPI, Request
 import joblib
 import pandas as pd
-import json
 
 app = FastAPI()
 
+# Chargement de votre modèle IA
 model = joblib.load("eventzella_best_model_Random_Forest.pkl")
 
 @app.get("/")
@@ -14,49 +14,26 @@ def read_root():
 @app.post("/predict")
 async def predict(request: Request):
     try:
-        # 1. Vérifier si l'enveloppe envoyée par Power Automate est vide
-        body_bytes = await request.body()
-        if not body_bytes:
-            return ["Erreur : Aucune donnée reçue par l'API (Le Corps HTTP est vide)"]
+        # 1. On récupère directement les données (FastAPI les a déjà traduites en liste)
+        data = await request.json()
         
-        # 2. Lire les données envoyées
-        data = json.loads(body_bytes)
-        
-        # Sécurité : si les données arrivent sous forme de texte, on les re-décode
-        if isinstance(data, str):
-            data = json.loads(data)
-        
+        # 2. On transforme la liste en tableau de données (DataFrame)
         df = pd.DataFrame(data)
         
-        # 3. Dictionnaire pour traduire le langage brut de Power Automate pour l'IA
-        colonnes_mapping = {
-            'Valeur budget 2': 'budget',
-            'Valeur marketing_spend': 'marketing_spend',
-            'Valeur new_beneficiaries': 'new_beneficiaries',
-            'Valeur rating': 'rating',
-            'Valeur event_duration_days': 'event_duration_days',
-            'Valeur is_weekend': 'is_weekend',
-            'Valeur Month': 'month',
-            'Valeur day_of_week': 'day_of_week',
-            'Valeur week_of_year': 'week_of_year',
-            'Valeur quarter': 'quarter',
-            'Selected_event_type': 'event_type',
-            'Selected_provider_service_type': 'provider_service_type',
-            'Selected_category_name': 'category_name',
-            'Selected_region': 'region'
-        }
+        # 3. Nettoyage magique : on supprime les espaces invisibles avant et après les noms de colonnes
+        df.columns = df.columns.str.strip()
         
-        # Renommer les colonnes
-        df = df.rename(columns=colonnes_mapping)
+        # 4. On supprime la colonne "Somme de ID" ou "ID" si Power BI l'a envoyée par erreur
+        colonnes_a_supprimer = [col for col in df.columns if "ID" in col]
+        df = df.drop(columns=colonnes_a_supprimer)
         
-        # Nettoyer les surplus
-        if 'ID' in df.columns:
-            df = df.drop(columns=['ID'])
-        df = df.drop_duplicates().head(1)
+        # 5. On fait la prédiction avec le modèle !
+        prediction = model.predict(df)
         
-        # 4. Faire la prédiction
-        predictions = model.predict(df)
-        return predictions.tolist()
+        # 6. On renvoie le chiffre d'affaires (arrondi à 2 chiffres après la virgule pour faire propre)
+        resultat_ca = round(prediction[0], 2)
+        
+        return [f"{resultat_ca} €"]
         
     except Exception as e:
-        return [f"Erreur technique de l'API : {str(e)}"]
+        return [f"Erreur API : {str(e)}"]
